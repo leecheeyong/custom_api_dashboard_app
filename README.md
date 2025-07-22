@@ -1,4 +1,6 @@
-# Custom API Dashboard App
+<img src="./assets/images/icon.png" width="100">
+
+# [Custom API Dashboard App](https://cad.dino.icu)
 
 A powerful widget-based dashboard app that lets you display data from any API endpoint. Create custom widgets, install community widgets, and personalize your dashboard.
 
@@ -16,7 +18,7 @@ Widgets are fetched from the [community-widgets repo](https://github.com/leechee
 
 ## Contributing
 
-Contributions are welcome! Please open issues or pull requests on [GitHub](https://github.com/leecheeyong/custom_api_dashboard_app).
+Contributions are welcome! Please open issues or pull requests on [GitHub](https://github.com/leecheeyong/custom_api_dashboard_app/pulls).
 
 ## License
 
