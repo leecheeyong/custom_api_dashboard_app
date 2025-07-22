@@ -1,5 +1,5 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { createContext, useContext, useEffect, useState } from "react";
 
 interface DarkModeContextType {
   isDarkMode: boolean;
@@ -13,12 +13,16 @@ const DarkModeContext = createContext<DarkModeContextType>({
 
 export const useDarkMode = () => useContext(DarkModeContext);
 
-export const DarkModeProvider = ({ children }: { children: React.ReactNode }) => {
+export const DarkModeProvider = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
   const [isDarkMode, setIsDarkMode] = useState(false);
 
   useEffect(() => {
     (async () => {
-      const settings = await AsyncStorage.getItem('settings');
+      const settings = await AsyncStorage.getItem("settings");
       if (settings) {
         const parsed = JSON.parse(settings);
         setIsDarkMode(!!parsed.darkMode);
@@ -28,10 +32,10 @@ export const DarkModeProvider = ({ children }: { children: React.ReactNode }) =>
 
   const setDarkMode = async (value: boolean) => {
     setIsDarkMode(value);
-    const settings = await AsyncStorage.getItem('settings');
+    const settings = await AsyncStorage.getItem("settings");
     let parsed = settings ? JSON.parse(settings) : {};
     parsed.darkMode = value;
-    await AsyncStorage.setItem('settings', JSON.stringify(parsed));
+    await AsyncStorage.setItem("settings", JSON.stringify(parsed));
   };
 
   return (

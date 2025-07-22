@@ -1,18 +1,22 @@
-import { Tabs } from 'expo-router';
-import React from 'react';
-import { Image } from 'react-native';
-import { DarkModeProvider, useDarkMode } from './DarkModeContext';
+import { Tabs } from "expo-router";
+import React from "react";
+import { Image } from "react-native";
+import { DarkModeProvider, useDarkMode } from "./DarkModeContext";
 
 function TabIcon({ focused, label }: { focused: boolean; label: string }) {
   const { isDarkMode } = useDarkMode();
-  const allowedLabels = ['Home', 'Community', 'Settings', 'Welcome'];
+  const allowedLabels = ["Home", "Community", "Settings", "Welcome"];
   if (!allowedLabels.includes(label)) return null;
   const getIconSource = (label: string) => {
     switch (label) {
-      case 'Home': return require('../assets/icons/home.png');
-      case 'Community': return require('../assets/icons/community.png');
-      case 'Settings': return require('../assets/icons/settings.png');
-      case 'Welcome': return require('../assets/icons/get-started.png');
+      case "Home":
+        return require("../assets/icons/home.png");
+      case "Community":
+        return require("../assets/icons/community.png");
+      case "Settings":
+        return require("../assets/icons/settings.png");
+      case "Welcome":
+        return require("../assets/icons/get-started.png");
     }
   };
   return (
@@ -24,7 +28,7 @@ function TabIcon({ focused, label }: { focused: boolean; label: string }) {
         opacity: focused ? 1 : 0.6,
         tintColor: undefined,
         transform: [{ scale: focused ? 1.1 : 1 }],
-        ...(isDarkMode ? { tintColor: undefined, filter: 'invert(1)' } : {})
+        ...(isDarkMode ? { tintColor: undefined, filter: "invert(1)" } : {}),
       }}
       resizeMode="contain"
     />
@@ -38,23 +42,24 @@ function TabLayoutInner() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: isDarkMode ? '#23232a' : '#ffffff',
+          backgroundColor: isDarkMode ? "#23232a" : "#ffffff",
           borderTopWidth: 0,
           paddingBottom: 8,
           paddingTop: 8,
           height: 70,
         },
-        tabBarActiveTintColor: isDarkMode ? '#60a5fa' : '#3B82F6',
-        tabBarInactiveTintColor: isDarkMode ? '#a1a1aa' : '#64748b',
+        tabBarActiveTintColor: isDarkMode ? "#60a5fa" : "#3B82F6",
+        tabBarInactiveTintColor: isDarkMode ? "#a1a1aa" : "#64748b",
         tabBarLabelStyle: {
           fontSize: 12,
-          fontWeight: '500',
+          fontWeight: "500",
         },
-      }}>
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
+          title: "Home",
           tabBarIcon: ({ focused }) => (
             <TabIcon focused={focused} label="Home" />
           ),
@@ -63,7 +68,7 @@ function TabLayoutInner() {
       <Tabs.Screen
         name="community"
         options={{
-          title: 'Community',
+          title: "Community",
           tabBarIcon: ({ focused }) => (
             <TabIcon focused={focused} label="Community" />
           ),
@@ -72,7 +77,7 @@ function TabLayoutInner() {
       <Tabs.Screen
         name="settings"
         options={{
-          title: 'Settings',
+          title: "Settings",
           tabBarIcon: ({ focused }) => (
             <TabIcon focused={focused} label="Settings" />
           ),
@@ -81,7 +86,7 @@ function TabLayoutInner() {
       <Tabs.Screen
         name="welcome"
         options={{
-          title: 'Welcome',
+          title: "Info",
           tabBarIcon: ({ focused }) => (
             <TabIcon focused={focused} label="Welcome" />
           ),
@@ -90,13 +95,13 @@ function TabLayoutInner() {
       <Tabs.Screen
         name="create"
         options={{
-          href: null 
+          href: null,
         }}
       />
-          <Tabs.Screen
+      <Tabs.Screen
         name="DarkModeContext"
         options={{
-          href: null 
+          href: null,
         }}
       />
     </Tabs>
