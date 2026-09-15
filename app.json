@@ -15,7 +15,7 @@
         "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.cheeyonglee.customapidashboard"
+      "package": "com.cheeyonglee.apidashboard"
     },
     "web": {
       "bundler": "metro",
