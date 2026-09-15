@@ -95,8 +95,7 @@ export default function SettingsScreen() {
 
   const MIT_LICENSE_URL =
     "https://github.com/leecheeyong/custom_api_dashboard_app/blob/main/LICENSE";
-  const GITHUB_URL = 
-    "https://github.com/leecheeyong/custom_api_dashboard_app";
+  const GITHUB_URL = "https://github.com/leecheeyong/custom_api_dashboard_app";
   const showAppInfo = () => {
     setAboutModalVisible(true);
   };
@@ -298,7 +297,7 @@ export default function SettingsScreen() {
               View on Github
             </Text>
           </TouchableOpacity>
-                    <TouchableOpacity
+          <TouchableOpacity
             style={[
               styles.actionButton,
               isDarkMode && darkStyles.actionButton,

@@ -23,6 +23,10 @@ interface CommunityWidget {
   category: string;
   refreshInterval: number;
   fields: Object;
+  actions?: any[];
+  kind?: string;
+  layout?: string;
+  accentColor?: string;
 }
 
 const DEFAULT_COMMUNITY_WIDGETS: CommunityWidget[] = [];
@@ -96,14 +100,48 @@ export default function CommunityScreen() {
         return;
       }
 
+      const now = Date.now().toString();
       const newWidget = {
-        id: Date.now().toString(),
+        id: now,
         title: widget.title,
+        description: (widget as any).description || "",
+        kind: (widget as any).kind || "display",
         apiUrl: widget.apiUrl,
+        method: (widget as any).method || "GET",
         refreshInterval: widget.refreshInterval,
+        autoRefresh: true,
+        layout: (widget as any).layout || "comfortable",
+        borderRadius: (widget as any).borderRadius ?? 16,
         backgroundColor: widget.backgroundColor,
         textColor: widget.textColor,
-        fields: widget.fields || [],
+        accentColor: (widget as any).accentColor || "#2563EB",
+        showTitle: true,
+        showLastUpdated: true,
+        fields: Array.isArray(widget.fields)
+          ? widget.fields
+              .filter((f: any) => f && typeof f.key === "string" && f.key)
+              .map((f: any, i: number) => ({
+                id: typeof f.id === "string" && f.id ? f.id : `${now}-f${i}`,
+                label:
+                  typeof f.label === "string" && f.label
+                    ? f.label
+                    : String(f.key),
+                key: String(f.key),
+                type:
+                  f.type === "number" || f.type === "boolean" ? f.type : "text",
+              }))
+          : [],
+        actions: Array.isArray((widget as any).actions)
+          ? (widget as any).actions.map((a: any, i: number) => ({
+              id: typeof a.id === "string" && a.id ? a.id : `${now}-a${i}`,
+              label: String(a.label || `Action ${i + 1}`),
+              method: a.method || "POST",
+              url: typeof a.url === "string" ? a.url : "",
+              body: a.body || undefined,
+              confirm: !!a.confirm,
+              style: a.style || "primary",
+            }))
+          : [],
       };
 
       const updatedWidgets = [...widgets, newWidget];

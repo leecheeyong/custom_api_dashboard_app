@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { BlurView } from "expo-blur";
 import { router } from "expo-router";
 import { useFocusEffect } from "expo-router/react-navigation";
 import React, { useEffect, useState } from "react";
@@ -6,6 +7,7 @@ import {
   Alert,
   Dimensions,
   Image,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -14,13 +16,22 @@ import {
   View,
 } from "react-native";
 import Animated, {
+  FadeIn,
   FadeInUp,
+  FadeOut,
   FadeOutDown,
+  useAnimatedStyle,
   useSharedValue,
+  withSpring,
+  withTiming,
 } from "react-native-reanimated";
 import { useDarkMode } from "./DarkModeContext";
 
 const { width } = Dimensions.get("window");
+
+type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+type WidgetKind = "display" | "action" | "hybrid";
+type WidgetLayout = "compact" | "comfortable" | "detailed";
 
 interface WidgetField {
   id: string;
@@ -29,16 +40,129 @@ interface WidgetField {
   type: "text" | "number" | "boolean";
 }
 
+interface WidgetAction {
+  id: string;
+  label: string;
+  method: HttpMethod;
+  url: string;
+  body?: string;
+  confirm?: boolean;
+  style?: "primary" | "secondary" | "danger" | "ghost";
+}
+
 interface Widget {
   id: string;
   title: string;
+  description?: string;
+  kind?: WidgetKind;
   apiUrl: string;
+  method?: HttpMethod;
+  headers?: string;
+  body?: string;
   refreshInterval: number;
+  autoRefresh?: boolean;
+  layout?: WidgetLayout;
+  borderRadius?: number;
+  textSize?: "s" | "m" | "l";
   backgroundColor: string;
   textColor: string;
+  accentColor?: string;
+  showTitle?: boolean;
+  showLastUpdated?: boolean;
   data?: any;
   lastUpdated?: string;
   fields?: WidgetField[];
+  actions?: WidgetAction[];
+}
+
+function WidgetCardShell({
+  index,
+  radius,
+  isSelected,
+  isDimmed,
+  isDarkMode,
+  style,
+  onLongPress,
+  onPress,
+  children,
+}: {
+  index: number;
+  radius: number;
+  isSelected: boolean;
+  isDimmed: boolean;
+  isDarkMode: boolean;
+  style: any;
+  onLongPress: () => void;
+  onPress: () => void;
+  children: React.ReactNode;
+}) {
+  const selP = useSharedValue(0);
+  const dimP = useSharedValue(0);
+
+  useEffect(() => {
+    selP.value = withSpring(isSelected ? 1 : 0, {
+      damping: 15,
+      stiffness: 220,
+    });
+    dimP.value = withTiming(isDimmed ? 1 : 0, { duration: 220 });
+  }, [isSelected, isDimmed, selP, dimP]);
+
+  const cardAnim = useAnimatedStyle(() => ({
+    transform: [{ scale: 1 + selP.value * 0.04 - dimP.value * 0.02 }],
+    opacity: 1 - dimP.value * 0.15,
+  }));
+
+  return (
+    <Animated.View
+      entering={FadeInUp.delay(index * 100)}
+      exiting={FadeOutDown}
+      style={[style, cardAnim]}
+    >
+      <TouchableOpacity
+        activeOpacity={0.96}
+        style={{ paddingVertical: 6 }}
+        onLongPress={onLongPress}
+        onPress={onPress}
+      >
+        {children}
+      </TouchableOpacity>
+      {/* Sibling overlay (not nested in the card touchable): a single,
+          unambiguous tap target — taps anywhere on a dimmed card
+          deselect without responder conflicts. */}
+      {isDimmed && (
+        <Animated.View
+          entering={FadeIn.duration(200)}
+          exiting={FadeOut.duration(200)}
+          style={{
+            ...StyleSheet.absoluteFill,
+            borderRadius: radius,
+            zIndex: 3,
+          }}
+        >
+          <Pressable
+            onPress={onPress}
+            style={{ flex: 1, borderRadius: radius, overflow: "hidden" }}
+          >
+            <BlurView
+              intensity={100}
+              tint={isDarkMode ? "dark" : "light"}
+              pointerEvents="none"
+              style={{ ...StyleSheet.absoluteFill }}
+            />
+            <View
+              pointerEvents="none"
+              style={{
+                ...StyleSheet.absoluteFill,
+                backgroundColor: isDarkMode
+                  ? "rgba(0,0,0,0.35)"
+                  : "rgba(248,250,252,0.55)",
+              }}
+            />
+          </Pressable>
+        </Animated.View>
+      )}
+    </Animated.View>
+  );
 }
 
 export default function HomeScreen() {
@@ -46,6 +170,7 @@ export default function HomeScreen() {
   const [widgets, setWidgets] = useState<Widget[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedWidget, setExpandedWidget] = useState<string | null>(null);
+  const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const scale = useSharedValue(1);
 
   useFocusEffect(
@@ -62,7 +187,9 @@ export default function HomeScreen() {
     try {
       const storedWidgets = await AsyncStorage.getItem("widgets");
       if (storedWidgets) {
-        const parsedWidgets = JSON.parse(storedWidgets);
+        const parsedWidgets = (JSON.parse(storedWidgets) as Widget[]).map(
+          (w) => ({ ...w, fields: normalizeFields((w as any).fields) }),
+        );
         setWidgets(parsedWidgets);
         fetchAllWidgetData(parsedWidgets);
       }
@@ -74,8 +201,29 @@ export default function HomeScreen() {
   const fetchAllWidgetData = async (widgetList: Widget[]) => {
     const updatedWidgets = await Promise.all(
       widgetList.map(async (widget) => {
+        if (!widget.apiUrl?.trim()) {
+          return {
+            ...widget,
+            lastUpdated: new Date().toLocaleTimeString(),
+          };
+        }
         try {
-          const response = await fetch(widget.apiUrl);
+          let parsedHeaders: Record<string, string> = {};
+          if (widget.headers) {
+            try {
+              parsedHeaders = JSON.parse(widget.headers);
+            } catch {
+              parsedHeaders = {};
+            }
+          }
+          const response = await fetch(widget.apiUrl, {
+            method: widget.method || "GET",
+            headers: { "Content-Type": "application/json", ...parsedHeaders },
+            body:
+              (widget.method || "GET") === "GET"
+                ? undefined
+                : widget.body || undefined,
+          });
           const text = await response.text();
           let data;
           try {
@@ -130,19 +278,108 @@ export default function HomeScreen() {
   };
 
   const editWidget = (widget: Widget) => {
+    setSelectedWidgetId(null);
     const editableWidget = {
       id: widget.id,
       title: widget.title,
+      description: widget.description || "",
+      kind: widget.kind || "display",
       apiUrl: widget.apiUrl,
+      method: widget.method || "GET",
+      headers: widget.headers || "",
+      body: widget.body || "",
       refreshInterval: widget.refreshInterval,
+      autoRefresh: widget.autoRefresh ?? true,
+      layout: widget.layout || "comfortable",
+      borderRadius: widget.borderRadius ?? 16,
+      textSize: widget.textSize || "m",
       backgroundColor: widget.backgroundColor,
       textColor: widget.textColor,
+      accentColor: widget.accentColor || "#2563EB",
+      showTitle: widget.showTitle ?? true,
+      showLastUpdated: widget.showLastUpdated ?? true,
       fields: widget.fields || [],
+      actions: widget.actions || [],
     };
     router.push({
       pathname: "/create",
       params: { editWidget: JSON.stringify(editableWidget) },
     });
+  };
+
+  const [firingId, setFiringId] = useState<string | null>(null);
+
+  const fireAction = async (widget: Widget, action: WidgetAction) => {
+    const doFire = async () => {
+      const url = action.url?.trim() || widget.apiUrl?.trim();
+      if (!url) {
+        Alert.alert("Missing URL", "This button has no URL configured.");
+        return;
+      }
+      setFiringId(`${widget.id}:${action.id}`);
+      try {
+        const res = await fetch(url, {
+          method: action.method || "POST",
+          headers: { "Content-Type": "application/json" },
+          body:
+            (action.method || "POST") === "GET"
+              ? undefined
+              : action.body || undefined,
+        });
+        const text = await res.text();
+        let preview = text;
+        try {
+          preview = JSON.stringify(JSON.parse(text), null, 2).substring(0, 400);
+        } catch {
+          preview = text.substring(0, 400);
+        }
+        Alert.alert(
+          res.ok
+            ? `${action.label} — OK (${res.status})`
+            : `${action.label} — ${res.status}`,
+          preview || "(empty response)",
+        );
+        if (widget.apiUrl?.trim()) fetchAllWidgetData(widgets);
+      } catch {
+        Alert.alert("Failed", `Could not reach ${action.label}.`);
+      } finally {
+        setFiringId(null);
+      }
+    };
+    if (action.confirm) {
+      Alert.alert(`Trigger "${action.label}"?`, "This will call the API.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Trigger", onPress: doFire },
+      ]);
+    } else {
+      doFire();
+    }
+  };
+
+  const getActionStyle = (action: WidgetAction, widget: Widget) => {
+    const accent = widget.accentColor || "#2563EB";
+    switch (action.style) {
+      case "danger":
+        return {
+          backgroundColor: "#EF4444",
+          borderColor: "#EF4444",
+          color: "#fff",
+        };
+      case "secondary":
+        return {
+          backgroundColor: "transparent",
+          borderColor: "#94A3B8",
+          color: widget.textColor,
+        };
+      case "ghost":
+        return {
+          backgroundColor: "transparent",
+          borderColor: "transparent",
+          color: accent,
+        };
+      default:
+        return { backgroundColor: accent, borderColor: accent, color: "#fff" };
+    }
   };
 
   const renderWidgetData = (
@@ -207,7 +444,7 @@ export default function HomeScreen() {
               isDarkMode && darkStyles.customFieldValue,
             ]}
           >
-            {String(data[field.key])}
+            {formatFieldValue(getValueAtPath(data, field.key))}
           </Text>
         </View>
       ));
@@ -249,12 +486,9 @@ export default function HomeScreen() {
     headerTitle: { color: "#f1f5f9" },
     addButton: { backgroundColor: "#23232a" },
     addButtonText: { color: "#60a5fa" },
-    widgetCard: { backgroundColor: "#23232a", borderColor: "#27272a" },
+    widgetCard: {},
     widgetContent: { backgroundColor: "#18181b", borderColor: "#27272a" },
     widgetTitle: { color: "#f1f5f9" },
-    actionButton: { backgroundColor: "#23232a" },
-    actionButtonText: { color: "#60a5fa" },
-    actionButtonTextDelete: { color: "#ef4444" },
     dataContainer: { backgroundColor: "#23232a", borderColor: "#27272a" },
     rawToggle: { backgroundColor: "#18181b" },
     rawToggleText: { color: "#60a5fa" },
@@ -283,7 +517,6 @@ export default function HomeScreen() {
         style={[styles.emptyContainer, isDarkMode && darkStyles.emptyContainer]}
       >
         <View style={styles.emptyContent}>
-
           <Text
             style={[styles.emptyTitle, isDarkMode && darkStyles.emptyTitle]}
           >
@@ -315,194 +548,312 @@ export default function HomeScreen() {
     );
   }
 
+  const selectedWidget = widgets.find((w) => w.id === selectedWidgetId) ?? null;
+
   return (
     <View style={[styles.container, isDarkMode && darkStyles.container]}>
       <View style={[styles.header, isDarkMode && darkStyles.header]}>
-        <Text
-          style={[styles.headerTitle, isDarkMode && darkStyles.headerTitle]}
-        >
-          My Dashboard
-        </Text>
-        <TouchableOpacity
-          style={[styles.addButton, isDarkMode && darkStyles.addButton]}
-          onPress={() => router.push("/create")}
+        <Pressable
+          style={{ flex: 1 }}
+          onPress={() => setSelectedWidgetId(null)}
         >
           <Text
-            style={[
-              styles.addButtonText,
-              isDarkMode && darkStyles.addButtonText,
-            ]}
+            style={[styles.headerTitle, isDarkMode && darkStyles.headerTitle]}
           >
-            ➕
+            My Dashboard
           </Text>
-        </TouchableOpacity>
+        </Pressable>
+        <View style={styles.headerRight}>
+          {selectedWidget ? (
+            <>
+              <TouchableOpacity
+                style={[styles.addButton, isDarkMode && darkStyles.addButton]}
+                onPress={() => editWidget(selectedWidget)}
+              >
+                <Image
+                  source={require("../assets/icons/edit.png")}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    tintColor: isDarkMode ? "white" : undefined,
+                  }}
+                  resizeMode="contain"
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.addButton, isDarkMode && darkStyles.addButton]}
+                onPress={() => {
+                  setSelectedWidgetId(null);
+                  deleteWidget(selectedWidget.id);
+                }}
+              >
+                <Image
+                  source={require("../assets/icons/delete.png")}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    tintColor: isDarkMode ? "white" : undefined,
+                  }}
+                  resizeMode="contain"
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.addButton, isDarkMode && darkStyles.addButton]}
+                onPress={() => setSelectedWidgetId(null)}
+              >
+                <Text
+                  style={[
+                    styles.addButtonText,
+                    isDarkMode && darkStyles.addButtonText,
+                    { fontSize: 16 },
+                  ]}
+                >
+                  ✕
+                </Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <TouchableOpacity
+              style={[styles.addButton, isDarkMode && darkStyles.addButton]}
+              onPress={() => router.push("/create")}
+            >
+              <Text
+                style={[
+                  styles.addButtonText,
+                  isDarkMode && darkStyles.addButtonText,
+                ]}
+              >
+                ➕
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { flexGrow: 1 }]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {widgets.map((widget, index) => (
-          <Animated.View
-            key={widget.id}
-            entering={FadeInUp.delay(index * 100)}
-            exiting={FadeOutDown}
-            style={[
-              styles.widgetCard,
-              isDarkMode && darkStyles.widgetCard,
-              { borderRadius: 16 },
-            ]}
-          >
-            <View
+        {widgets.map((widget, index) => {
+          const radius = widget.borderRadius ?? 16;
+          const cardPadding =
+            widget.layout === "compact"
+              ? 10
+              : widget.layout === "detailed"
+                ? 18
+                : 14;
+          const titleSize =
+            widget.textSize === "s" ? 16 : widget.textSize === "l" ? 21 : 18;
+          const showTitle = widget.showTitle ?? true;
+          const showUpdated = widget.showLastUpdated ?? true;
+          const isActionOnly =
+            widget.kind === "action" && !widget.apiUrl?.trim();
+          const isSelected = selectedWidgetId === widget.id;
+          const isDimmed =
+            selectedWidgetId !== null && selectedWidgetId !== widget.id;
+          const selectAccent = widget.accentColor || "#2563EB";
+          return (
+            <WidgetCardShell
+              key={widget.id}
+              index={index}
+              radius={radius}
+              isSelected={isSelected}
+              isDimmed={isDimmed}
+              isDarkMode={isDarkMode}
               style={[
-                styles.widgetContent,
-                isDarkMode && darkStyles.widgetContent,
-                { borderRadius: 16 },
-                widget.backgroundColor &&
-                  !isDarkMode && { backgroundColor: widget.backgroundColor },
-                widget.backgroundColor &&
-                  isDarkMode && { backgroundColor: widget.backgroundColor },
+                styles.widgetCard,
+                isDarkMode && darkStyles.widgetCard,
+                { borderRadius: radius },
+                isSelected && styles.widgetCardSelected,
               ]}
+              onLongPress={() => {
+                // Long-press selects when nothing is selected;
+                // anywhere else (including here) unselects.
+                if (selectedWidgetId === null) setSelectedWidgetId(widget.id);
+                else setSelectedWidgetId(null);
+              }}
+              onPress={() => {
+                // Anything but the header edit/delete buttons unselects.
+                setSelectedWidgetId(null);
+              }}
             >
-              {isDarkMode &&
-                widget.backgroundColor &&
-                isLightColor(widget.backgroundColor) && (
-                  <View
-                    style={{
-                      ...StyleSheet.absoluteFill,
-                      backgroundColor: "rgba(24,24,27,0.7)",
-                      borderRadius: 16,
-                      zIndex: 1,
-                    }}
-                  />
-                )}
-              <View style={{ zIndex: 2 }}>
-                <View style={styles.widgetHeader}>
-                  <View style={styles.widgetHeaderLeft}>
-                    <Text
-                      style={[
-                        styles.widgetTitle,
-                        isDarkMode
-                          ? { color: widget.textColor || "#f1f5f9" }
-                          : { color: widget.textColor || "#1e293b" },
-                        { fontWeight: "bold", fontSize: 20 },
-                      ]}
-                      numberOfLines={1}
-                      ellipsizeMode="tail"
-                    >
-                      {widget.title}
-                    </Text>
-                  </View>
-                  <View style={styles.widgetActions}>
-                    <TouchableOpacity
-                      style={[
-                        styles.actionButton,
-                        isDarkMode && darkStyles.actionButton,
-                      ]}
-                      onPress={() => editWidget(widget)}
-                    >
-                      <Image
-                        source={require("../assets/icons/edit.png")}
-                        style={{
-                          width: 20,
-                          height: 20,
-                          tintColor: isDarkMode ? "white" : undefined,
-                        }}
-                        resizeMode="contain"
-                      />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[
-                        styles.actionButton,
-                        isDarkMode && darkStyles.actionButton,
-                      ]}
-                      onPress={() => deleteWidget(widget.id)}
-                    >
-                      <Image
-                        source={require("../assets/icons/delete.png")}
-                        style={{
-                          width: 20,
-                          height: 20,
-                          tintColor: isDarkMode ? "white" : undefined,
-                        }}
-                        resizeMode="contain"
-                      />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                <View style={styles.widgetBody}>
-                  <View
-                    style={[
-                      styles.dataContainer,
-                      isDarkMode && darkStyles.dataContainer,
-                    ]}
-                  >
-                    {renderWidgetData(widget.data, widget.fields)}
-                    {typeof widget.data === "object" ||
-                    typeof widget.data === "string" ? (
-                      <TouchableOpacity
-                        style={[
-                          styles.rawToggle,
-                          isDarkMode && darkStyles.rawToggle,
-                        ]}
-                        onPress={() =>
-                          setExpandedWidget(
-                            expandedWidget === widget.id ? null : widget.id,
-                          )
-                        }
-                      >
-                        <Text
-                          style={[
-                            styles.rawToggleText,
-                            isDarkMode && darkStyles.rawToggleText,
-                          ]}
-                        >
-                          {expandedWidget === widget.id
-                            ? "Hide Raw Data"
-                            : "Show Raw Data"}
-                        </Text>
-                      </TouchableOpacity>
-                    ) : null}
-                    {expandedWidget === widget.id && (
-                      <View
-                        style={[
-                          styles.rawDataBox,
-                          isDarkMode && darkStyles.rawDataBox,
-                        ]}
-                      >
-                        <ScrollView horizontal>
+              <View
+                style={[
+                  styles.widgetContent,
+                  isDarkMode && darkStyles.widgetContent,
+                  { borderRadius: radius, padding: cardPadding },
+                  widget.backgroundColor &&
+                    !isDarkMode && { backgroundColor: widget.backgroundColor },
+                  widget.backgroundColor &&
+                    isDarkMode && { backgroundColor: widget.backgroundColor },
+                  isSelected && { borderColor: selectAccent, borderWidth: 2 },
+                ]}
+              >
+                {isDarkMode &&
+                  widget.backgroundColor &&
+                  isLightColor(widget.backgroundColor) && (
+                    <View
+                      style={{
+                        ...StyleSheet.absoluteFill,
+                        backgroundColor: "rgba(24,24,27,0.7)",
+                        borderRadius: radius,
+                        zIndex: 1,
+                      }}
+                    />
+                  )}
+                <View style={{ zIndex: 2 }}>
+                  <View style={styles.widgetHeader}>
+                    <View style={styles.widgetHeaderLeft}>
+                      {showTitle ? (
+                        <View style={{ flexShrink: 1 }}>
                           <Text
                             style={[
-                              styles.rawDataText,
-                              isDarkMode && darkStyles.rawDataText,
+                              styles.widgetTitle,
+                              isDarkMode
+                                ? { color: widget.textColor || "#f1f5f9" }
+                                : { color: widget.textColor || "#1e293b" },
+                              { fontWeight: "bold", fontSize: titleSize },
+                            ]}
+                            numberOfLines={1}
+                            ellipsizeMode="tail"
+                          >
+                            {widget.title}
+                          </Text>
+                          {!!widget.description && (
+                            <Text
+                              numberOfLines={2}
+                              style={{
+                                fontSize: 12,
+                                marginTop: 2,
+                                color: widget.textColor || "#64748b",
+                                opacity: 0.7,
+                              }}
+                            >
+                              {widget.description}
+                            </Text>
+                          )}
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
+                  {!isActionOnly && (
+                    <View style={styles.widgetBody}>
+                      <View
+                        style={[
+                          styles.dataContainer,
+                          isDarkMode && darkStyles.dataContainer,
+                        ]}
+                      >
+                        {renderWidgetData(widget.data, widget.fields)}
+                        {typeof widget.data === "object" ||
+                        typeof widget.data === "string" ? (
+                          <TouchableOpacity
+                            style={[
+                              styles.rawToggle,
+                              isDarkMode && darkStyles.rawToggle,
+                            ]}
+                            onPress={() =>
+                              setExpandedWidget(
+                                expandedWidget === widget.id ? null : widget.id,
+                              )
+                            }
+                          >
+                            <Text
+                              style={[
+                                styles.rawToggleText,
+                                isDarkMode && darkStyles.rawToggleText,
+                              ]}
+                            >
+                              {expandedWidget === widget.id
+                                ? "Hide Raw Data"
+                                : "Show Raw Data"}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : null}
+                        {expandedWidget === widget.id && (
+                          <View
+                            style={[
+                              styles.rawDataBox,
+                              isDarkMode && darkStyles.rawDataBox,
                             ]}
                           >
-                            {typeof widget.data === "string"
-                              ? widget.data
-                              : JSON.stringify(widget.data, null, 2)}
-                          </Text>
-                        </ScrollView>
+                            <ScrollView
+                              style={styles.rawDataScroll}
+                              nestedScrollEnabled
+                            >
+                              <ScrollView horizontal nestedScrollEnabled>
+                                <Text
+                                  style={[
+                                    styles.rawDataText,
+                                    isDarkMode && darkStyles.rawDataText,
+                                  ]}
+                                >
+                                  {typeof widget.data === "string"
+                                    ? widget.data
+                                    : JSON.stringify(widget.data, null, 2)}
+                                </Text>
+                              </ScrollView>
+                            </ScrollView>
+                          </View>
+                        )}
                       </View>
-                    )}
-                  </View>
+                    </View>
+                  )}
+                  {!!widget.actions?.length && (
+                    <View style={styles.triggerRow}>
+                      {widget.actions.map((a) => {
+                        const st = getActionStyle(a, widget);
+                        const busy = firingId === `${widget.id}:${a.id}`;
+                        return (
+                          <TouchableOpacity
+                            key={a.id}
+                            disabled={busy}
+                            onPress={() => fireAction(widget, a)}
+                            style={[
+                              styles.triggerBtn,
+                              {
+                                backgroundColor: st.backgroundColor,
+                                borderColor: st.borderColor,
+                                opacity: busy ? 0.6 : 1,
+                              },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.triggerBtnText,
+                                { color: st.color },
+                              ]}
+                            >
+                              {busy ? "…" : a.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+                  {showUpdated && widget.lastUpdated && (
+                    <Text
+                      style={[
+                        styles.lastUpdated,
+                        isDarkMode && darkStyles.lastUpdated,
+                      ]}
+                    >
+                      Last updated: {widget.lastUpdated}
+                    </Text>
+                  )}
                 </View>
-                {widget.lastUpdated && (
-                  <Text
-                    style={[
-                      styles.lastUpdated,
-                      isDarkMode && darkStyles.lastUpdated,
-                    ]}
-                  >
-                    Last updated: {widget.lastUpdated}
-                  </Text>
-                )}
               </View>
-            </View>
-          </Animated.View>
-        ))}
+            </WidgetCardShell>
+          );
+        })}
+        {/* Tappable empty space below the cards unselects */}
+        <Pressable
+          style={{ flexGrow: 1, minHeight: 80 }}
+          onPress={() => setSelectedWidgetId(null)}
+        />
       </ScrollView>
     </View>
   );
@@ -529,33 +880,34 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#1e293b",
   },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
   addButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: "#f1f5f9",
     justifyContent: "center",
     alignItems: "center",
   },
   addButtonText: {
-    fontSize: 20,
+    fontSize: 18,
     color: "#3B82F6",
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 16,
+    padding: 12,
   },
   widgetCard: {
-    marginBottom: 24,
-    borderRadius: 16,
-    backgroundColor: "white",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 6,
+    marginBottom: 0,
+  },
+  widgetCardSelected: {
+    transform: [{ scale: 1.02 }],
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    elevation: 8,
   },
   widgetContent: {
     borderRadius: 16,
@@ -567,7 +919,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 18,
+    marginBottom: 10,
   },
   widgetHeaderLeft: {
     flexDirection: "row",
@@ -585,29 +937,8 @@ const styles = StyleSheet.create({
     maxWidth: "100%",
     overflow: "hidden",
   },
-  widgetActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    minWidth: 0,
-    flexShrink: 0,
-    flexGrow: 0,
-    justifyContent: "flex-end",
-  },
-  actionButton: {
-    padding: 8,
-    marginLeft: 8,
-    backgroundColor: "#f1f5f9",
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    minWidth: 36,
-  },
-  actionButtonText: {
-    fontSize: 18,
-  },
   widgetBody: {
-    minHeight: 60,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   widgetData: {
     fontSize: 14,
@@ -670,8 +1001,8 @@ const styles = StyleSheet.create({
   dataContainer: {
     backgroundColor: "#f1f5f9",
     borderRadius: 8,
-    padding: 14,
-    marginBottom: 8,
+    padding: 10,
+    marginBottom: 4,
     borderWidth: 1,
     borderColor: "#e5e7eb",
   },
@@ -734,14 +1065,73 @@ const styles = StyleSheet.create({
     marginTop: 6,
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    maxHeight: 120,
+    maxHeight: 220,
+  },
+  rawDataScroll: {
+    maxHeight: 204,
   },
   rawDataText: {
     fontFamily: "monospace",
     fontSize: 12,
     color: "#334155",
   },
+  triggerRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  triggerBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginRight: 8,
+    marginBottom: 8,
+    minWidth: 88,
+    alignItems: "center",
+  },
+  triggerBtnText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
 });
+
+function getValueAtPath(data: any, path: string): any {
+  if (!path) return data;
+  return path.split(".").reduce((acc: any, part: string) => {
+    if (acc === null || acc === undefined) return undefined;
+    if (Array.isArray(acc)) {
+      const i = parseInt(part, 10);
+      return Number.isNaN(i) ? undefined : acc[i];
+    }
+    return acc[part];
+  }, data);
+}
+
+function formatFieldValue(v: any): string {
+  if (v === undefined) return "—";
+  if (v === null) return "null";
+  if (typeof v === "object")
+    return Array.isArray(v) ? `array[${v.length}]` : JSON.stringify(v);
+  return String(v);
+}
+
+function normalizeFields(raw: any): WidgetField[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((f) => f && typeof f.key === "string" && f.key.length > 0)
+    .map((f, i) => ({
+      id: typeof f.id === "string" && f.id ? f.id : `field-${Date.now()}-${i}`,
+      label: typeof f.label === "string" && f.label ? f.label : String(f.key),
+      key: String(f.key),
+      type:
+        f.type === "number" || f.type === "boolean"
+          ? f.type
+          : ("text" as const),
+    }));
+}
 
 function isLightColor(color: string) {
   const c = color.charAt(0) === "#" ? color.substring(1) : color;
